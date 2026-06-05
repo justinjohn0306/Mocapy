@@ -1,0 +1,51 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mocapy"
+version = "0.1.0"
+description = "Markerless motion capture in Python: video / webcam -> MediaPipe landmarks -> VRM avatar bones -> BVH. Python solver + exporters, with an optional Node/WASM detection bridge for higher-fidelity legs."
+readme = "README.md"
+requires-python = ">=3.10,<3.13"
+license = { file = "LICENSE" }
+keywords = ["motion-capture", "mocap", "vrm", "bvh", "mediapipe", "pose-estimation"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: End Users/Desktop",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Multimedia :: Graphics :: 3D Modeling",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "numpy>=1.26,<2.0",
+    "opencv-python>=4.8",
+    "mediapipe>=0.10.21",
+]
+
+[project.optional-dependencies]
+docs = ["matplotlib>=3.7"]
+dev = ["matplotlib>=3.7"]
+
+[project.scripts]
+mocapy-detect = "mocapy.cli:detect_main"
+mocapy-solve = "mocapy.cli:solve_main"
+mocapy-webcam = "mocapy.cli:webcam_main"
+
+[project.urls]
+"Source" = "https://github.com/justinjohn0306/mocapy"
+"Issues" = "https://github.com/justinjohn0306/mocapy/issues"
+
+[tool.setuptools.packages.find]
+include = ["mocapy*"]
+exclude = ["validation*", "tools*", "fixtures*", "samples*", "docs*", "models*", "assets*"]
+
+[tool.setuptools.package-data]
+# Ship the default-skeleton JSON so `mocapy-solve` / `landmarks_to_bvh()` can
+# produce BVH output without the user supplying a VRM file. Models and per-rig
+# VRMs still live outside the package (models/, assets/).
+mocapy = ["_data/*.json"]

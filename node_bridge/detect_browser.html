@@ -1,0 +1,401 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Mocapy MediaPipe bridge</title>
+</head>
+<body>
+  <video id="vid" muted playsinline></video>
+  <canvas id="cvs"></canvas>
+  <pre id="log"></pre>
+
+  <script type="module">
+    // Loaded by Puppeteer driver. The driver:
+    //   1. Calls window.bridgeInit({ poseTask, handTask, faceTask, videoUrl,
+    //                                targetW, targetH }) — base64 model buffers
+    //      + a blob URL for the video — to set everything up.
+    //   2. Polls window.bridgeNext() repeatedly until it returns { done: true }.
+    //      Each call advances the video by 1/srcFps seconds, runs all three
+    //      landmarkers on the current frame, and returns the landmark data.
+    import { FilesetResolver, PoseLandmarker, HandLandmarker, FaceLandmarker,
+             HolisticLandmarker, DrawingUtils }
+      from './node_modules/@mediapipe/tasks-vision/vision_bundle.mjs';
+
+    // The MediaPipe tasks-vision skeleton palette the reference shows (its thumbnail's
+    // far-right panel) — teal/cyan #32EEDB connectors, exactly the DrawingUtils
+    // look. Same module + connection constants, so it matches 1:1.
+    const COL = {
+      poseConn: '#32EEDB', poseDot: '#E6FFFB',      // body / legs — MediaPipe teal
+      handConn: '#32EEDB', handDot: '#FF3030',      // hands — teal bones, red joints (MP style)
+      faceMesh: 'rgba(50,238,219,0.45)',            // face tesselation — teal
+      faceIris: '#30FF9A',                          // iris/oval — green (MP)
+      bbox:     'rgba(50,238,219,0.30)',            // faint pose-guided crop regions
+      handBox:  '#00E5FF',                          // STRONG hand/finger detection box
+    };
+
+    // Minimal OneEuro vector filter — same algorithm as the reference OneEuro
+    // filter source. Used to steady the PREVIEW landmarks so the overlay looks
+    // like a smoothed draw instead of raw per-frame jitter.
+    class _LP { filter(v, a) { if (!this.s) { this.s = v.slice(); } else { for (let i = 0; i < v.length; i++) this.s[i] = a * v[i] + (1 - a) * this.s[i]; } return this.s.slice(); } }
+    function _alpha(cut, freq) { const te = 1 / freq, tau = 1 / (2 * Math.PI * cut); return 1 / (1 + tau / te); }
+    class OneEuro {
+      constructor(freq = 30, minCut = 1, beta = 1, dCut = 2) { this.freq = freq; this.minCut = minCut; this.beta = beta; this.dCut = dCut; this.x = new _LP(); this.dx = new _LP(); this.prev = null; }
+      filter(v) { const dv = v.map((c, i) => this.prev ? (c - this.prev[i]) * this.freq : 0); const ed = this.dx.filter(dv, _alpha(this.dCut, this.freq)); const sp = Math.hypot(...ed); const cut = this.minCut + this.beta * sp; const out = this.x.filter(v, _alpha(cut, this.freq)); this.prev = v.slice(); return out; }
+    }
+    function smoothLandmarks(filters, lms) {  // lms: [{x,y,z}], filters: OneEuro[]
+      return lms.map((p, i) => { const o = filters[i].filter([p.x, p.y, p.z ?? 0]); return { x: o[0], y: o[1], z: o[2] }; });
+    }
+
+    const logEl = document.getElementById('log');
+    function log(...args) { logEl.textContent += args.join(' ') + '\n'; console.log(...args); }
+    window.bridgeLog = log;
+
+    function b64ToBuf(b64) {
+      const bin = atob(b64);
+      const buf = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) buf[i] = bin.charCodeAt(i);
+      return buf;
+    }
+
+    let state = null;
+
+    window.bridgeInit = async ({ poseTaskB64, handTaskB64, faceTaskB64, holisticTaskB64,
+                                 videoUrl, targetW, targetH, srcFps, preview, dark,
+                                 handConf = 0.5 }) => {
+      log('init: loading fileset...');
+      const fileset = await FilesetResolver.forVisionTasks('./node_modules/@mediapipe/tasks-vision/wasm');
+      log('init: creating landmarkers...');
+      // the reference's fast path: one combined HolisticLandmarker (pose+face+hands, internal
+      // ROI cropping). Skips the separate pose + dual-hand + face + manual crops.
+      let holistic = null;
+      if (holisticTaskB64) {
+        holistic = await HolisticLandmarker.createFromOptions(fileset, {
+          // CPU delegate: the holistic graph has ops the WebGL GPU delegate doesn't
+          // support, and CPU keeps it dependency-light (runs without a real GPU).
+          baseOptions: { modelAssetBuffer: b64ToBuf(holisticTaskB64), delegate: 'CPU' },
+          runningMode: 'VIDEO',
+          outputFaceBlendshapes: true,
+        });
+      }
+      const pose = holistic ? null : await PoseLandmarker.createFromOptions(fileset, {
+        baseOptions: { modelAssetBuffer: b64ToBuf(poseTaskB64), delegate: 'GPU' },
+        runningMode: 'VIDEO', numPoses: 1,
+      });
+      const handHi = holistic ? null : await HandLandmarker.createFromOptions(fileset, {
+        baseOptions: { modelAssetBuffer: b64ToBuf(handTaskB64), delegate: 'GPU' },
+        runningMode: 'VIDEO', numHands: 2,
+        minHandDetectionConfidence: handConf,
+        minHandPresenceConfidence: handConf,
+        minTrackingConfidence: handConf,
+      });
+      const handLo = holistic ? null : await HandLandmarker.createFromOptions(fileset, {
+        baseOptions: { modelAssetBuffer: b64ToBuf(handTaskB64), delegate: 'GPU' },
+        runningMode: 'VIDEO', numHands: 2,
+        minHandDetectionConfidence: 0.1,
+        minHandPresenceConfidence: 0.5,
+        minTrackingConfidence: 0.1,
+      });
+      const face = holistic ? null : await FaceLandmarker.createFromOptions(fileset, {
+        baseOptions: { modelAssetBuffer: b64ToBuf(faceTaskB64), delegate: 'GPU' },
+        runningMode: 'VIDEO', numFaces: 1,
+        outputFaceBlendshapes: true,
+        outputFacialTransformationMatrixes: true,
+      });
+      // IMAGE-mode landmarkers for pose-guided CROPS (the reference's get_hand_canvas / face
+      // crop trick): distant hands/faces are tiny full-frame but large in a tight
+      // crop around the pose's wrist / head landmarks. IMAGE mode (not VIDEO)
+      // because crops have no useful frame-to-frame continuity.
+      const handCrop = holistic ? null : await HandLandmarker.createFromOptions(fileset, {
+        baseOptions: { modelAssetBuffer: b64ToBuf(handTaskB64), delegate: 'GPU' },
+        runningMode: 'IMAGE', numHands: 2,
+        minHandDetectionConfidence: 0.1,
+        minHandPresenceConfidence: 0.5,
+        minTrackingConfidence: 0.1,
+      });
+      const faceImg = holistic ? null : await FaceLandmarker.createFromOptions(fileset, {
+        baseOptions: { modelAssetBuffer: b64ToBuf(faceTaskB64), delegate: 'GPU' },
+        runningMode: 'IMAGE', numFaces: 1,
+        outputFaceBlendshapes: true,
+        outputFacialTransformationMatrixes: true,
+      });
+      log('init: loading video...');
+      const vid = document.getElementById('vid');
+      vid.src = videoUrl;
+      await new Promise((resolve, reject) => {
+        vid.onloadedmetadata = resolve;
+        vid.onerror = () => reject(new Error('video load failed'));
+      });
+      // Wait for first frame ready so we can pull timestamps reliably.
+      try { await vid.play(); await vid.pause(); } catch (e) {}
+      const cvs = document.getElementById('cvs');
+      cvs.width = targetW; cvs.height = targetH;
+      // Offscreen canvas reused for hand/face crops.
+      const crop = document.createElement('canvas');
+      const ctx = cvs.getContext('2d');
+      state = { holistic, pose, handHi, handLo, handCrop, face, faceImg, vid, cvs,
+                ctx, crop, cropCtx: crop.getContext('2d'),
+                idx: 0, srcFps, targetW, targetH,
+                frameMax: Math.max(targetW, targetH),
+                preview: !!preview, dark: preview ? (dark == null ? 0.8 : dark) : 0,
+                du: new DrawingUtils(ctx),
+                // OneEuro display-smoothing filters (preview only), the reference's pose params.
+                poseF: Array.from({ length: 33 }, () => new OneEuro(30, 1, 1, 2)),
+                handF: { Left: Array.from({ length: 21 }, () => new OneEuro(30, 1, 1, 2)),
+                         Right: Array.from({ length: 21 }, () => new OneEuro(30, 1, 1, 2)) } };
+      if (preview) {                 // visible-window preview: show the canvas big
+        document.getElementById('vid').style.display = 'none';
+        cvs.style.cssText = 'width:100vw;height:auto;display:block;background:#000';
+        document.body.style.cssText = 'margin:0;background:#000';
+      }
+      log('init: ready. video duration', vid.duration, 's at', srcFps, 'fps');
+      return { ready: true, duration: vid.duration,
+               videoW: vid.videoWidth, videoH: vid.videoHeight };
+    };
+
+    function pickHands(swPx) {
+      if (swPx <= 0) return state.handHi;
+      const ratio = state.frameMax / swPx;
+      return ratio > 7.5 ? state.handLo : state.handHi;
+    }
+
+    function landmarksToArr(lms) {
+      const out = [];
+      for (const lm of lms) out.push([lm.x, lm.y, lm.z ?? 0.0]);
+      return out;
+    }
+
+    // Pose landmarks carry a visibility score (0..1) the lower-body collision gate
+    // needs; hand/face landmarks don't. Captured as a parallel array so the JSON
+    // schema stays [x,y,z] for landmarks.
+    function visArr(lms) {
+      const out = [];
+      for (const lm of lms) out.push(lm.visibility ?? 1.0);
+      return out;
+    }
+
+    // Pose-guided crop rects (px on the mirrored main canvas), ports of the Python
+    // Detector._hand_crop / _face_crop. Return {x0,y0,cw,ch} or null when too small.
+    function handCropRect(raw, W, H) {
+      const lw = raw[15], rw = raw[16], shl = raw[11], shr = raw[12];
+      const swn = Math.hypot(shl[0] - shr[0], shl[1] - shr[1]);
+      const pad = Math.max(swn * 0.8, 0.08);
+      const x0 = Math.max(Math.floor((Math.min(lw[0], rw[0]) - pad) * W), 0);
+      const y0 = Math.max(Math.floor((Math.min(lw[1], rw[1]) - pad) * H), 0);
+      const x1 = Math.min(Math.ceil((Math.max(lw[0], rw[0]) + pad) * W), W);
+      const y1 = Math.min(Math.ceil((Math.max(lw[1], rw[1]) + pad) * H), H);
+      const cw = x1 - x0, ch = y1 - y0;
+      return (cw < 64 || ch < 64) ? null : { x0, y0, cw, ch };
+    }
+    function faceCropRect(raw, W, H) {
+      const idx = [0, 1, 2, 3, 4, 5, 6, 7, 8];
+      const xs = idx.map(i => raw[i][0] * W), ys = idx.map(i => raw[i][1] * H);
+      const cx = xs.reduce((a, b) => a + b) / xs.length;
+      const cy = ys.reduce((a, b) => a + b) / ys.length;
+      const span = Math.max(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys));
+      if (span < 5) return null;
+      const half = Math.max(span * 2.0, 80);
+      const x0 = Math.max(Math.floor(cx - half), 0), x1 = Math.min(Math.ceil(cx + half), W);
+      const y0 = Math.max(Math.floor(cy - half * 1.2), 0), y1 = Math.min(Math.ceil(cy + half * 0.9), H);
+      const cw = x1 - x0, ch = y1 - y0;
+      return (cw < 64 || ch < 64) ? null : { x0, y0, cw, ch };
+    }
+    function drawCrop(rect) {
+      state.crop.width = rect.cw; state.crop.height = rect.ch;
+      state.cropCtx.drawImage(state.cvs, rect.x0, rect.y0, rect.cw, rect.ch,
+                              0, 0, rect.cw, rect.ch);
+      return state.crop;
+    }
+
+    // the reference's pipeline assumes the video is horizontally mirrored ("selfie" convention)
+    // — the reference detector: "video source is assumed to be mirrored". Flip the
+    // canvas before drawing the frame.
+    function drawVideoMirrored() {
+      const { ctx, vid, targetW, targetH } = state;
+      ctx.save(); ctx.translate(targetW, 0); ctx.scale(-1, 1);
+      ctx.drawImage(vid, 0, 0, targetW, targetH); ctx.restore();
+    }
+
+    // Run all three landmarkers on the CURRENT canvas (must be the clean mirrored
+    // frame). Returns everything needed to both record and draw. Shared by the
+    // deterministic seek loop and the realtime playback loop.
+    function detectCanvas(ts) {
+      const { cvs, targetW, targetH } = state;
+      // the reference's fast holistic path — ONE inference for pose+face+hands (internal ROI).
+      if (state.holistic) {
+        const h = state.holistic.detectForVideo(cvs, ts);
+        // tasks-vision wraps each set one level deep ([[...]]); unwrap with [0].
+        const poseObjs = h.poseLandmarks?.[0] || null;
+        const worldObjs = h.poseWorldLandmarks?.[0] || null;
+        let raw = null, world = null, vis = null;
+        if (poseObjs) { raw = landmarksToArr(poseObjs); vis = visArr(poseObjs); }
+        if (worldObjs) world = landmarksToArr(worldObjs);
+        const hands = {};
+        // Holistic gives full-frame hands; the reference maps left->'Right', right->'Left'
+        // (handedness swapped since tasks-vision v0.10.5). No manual crops.
+        if (h.leftHandLandmarks?.[0]?.length) hands['Right'] = landmarksToArr(h.leftHandLandmarks[0]);
+        if (h.rightHandLandmarks?.[0]?.length) hands['Left'] = landmarksToArr(h.rightHandLandmarks[0]);
+        let faceLm = null, faceBlend = null;
+        if (h.faceLandmarks?.[0]?.length) {
+          faceLm = landmarksToArr(h.faceLandmarks[0]);
+          if (h.faceBlendshapes?.length) { faceBlend = {}; for (const c of h.faceBlendshapes[0].categories) faceBlend[c.categoryName] = c.score; }
+        }
+        return { raw, world, vis, hands, handCrops: {}, faceLm, faceMat: null,
+                 faceBlend, poseLandmarks: poseObjs, handBBox: null, faceBBox: null };
+      }
+      const poseRes = state.pose.detectForVideo(cvs, ts);
+      let raw = null, world = null, vis = null, sw = 0;
+      if (poseRes.landmarks?.length) {
+        raw = landmarksToArr(poseRes.landmarks[0]);
+        vis = visArr(poseRes.landmarks[0]);
+        if (poseRes.worldLandmarks?.length) world = landmarksToArr(poseRes.worldLandmarks[0]);
+        const L = raw[11], R = raw[12];
+        sw = Math.hypot((L[0] - R[0]) * targetW, (L[1] - R[1]) * targetH, (L[2] - R[2]) * targetW / 3.0);
+      }
+      const hands = {}, handCrops = {};
+      let handDone = false, handBBox = null, faceBBox = null;
+      if (raw) {
+        const hr = handCropRect(raw, targetW, targetH);
+        if (hr) {
+          handBBox = hr;
+          const res = state.handCrop.detect(drawCrop(hr));
+          if (res.landmarks?.length) {
+            for (let i = 0; i < res.landmarks.length; i++) {
+              const label = res.handedness?.[i]?.[0]?.categoryName || `H${i}`;
+              hands[label] = landmarksToArr(res.landmarks[i]);
+              handCrops[label] = [hr.x0, hr.y0, hr.cw, hr.ch];
+            }
+            handDone = true;
+          }
+        }
+      }
+      if (!handDone) {
+        const handRes = pickHands(sw).detectForVideo(cvs, ts);
+        if (handRes.landmarks?.length)
+          for (let i = 0; i < handRes.landmarks.length; i++) {
+            const label = handRes.handedness?.[i]?.[0]?.categoryName || `H${i}`;
+            hands[label] = landmarksToArr(handRes.landmarks[i]);
+          }
+      }
+      let faceLm = null, faceMat = null, faceBlend = null;
+      if (raw) {
+        const fr2 = faceCropRect(raw, targetW, targetH);
+        if (fr2) {
+          faceBBox = fr2;
+          const fres = state.faceImg.detect(drawCrop(fr2));
+          if (fres.faceLandmarks?.length) {
+            faceLm = landmarksToArr(fres.faceLandmarks[0]);
+            for (const p of faceLm) { p[0] = (p[0] * fr2.cw + fr2.x0) / targetW; p[1] = (p[1] * fr2.ch + fr2.y0) / targetH; }
+            if (fres.facialTransformationMatrixes?.length) {
+              const m = fres.facialTransformationMatrixes[0], data = m.data ?? m; faceMat = [];
+              for (let r = 0; r < 4; r++) faceMat.push(Array.from(data.slice(r * 4, r * 4 + 4)));
+            }
+            if (fres.faceBlendshapes?.length) { faceBlend = {}; for (const c of fres.faceBlendshapes[0].categories) faceBlend[c.categoryName] = c.score; }
+          }
+        }
+      }
+      return { raw, world, vis, hands, handCrops, faceLm, faceMat, faceBlend,
+               poseLandmarks: poseRes.landmarks?.[0] || null, handBBox, faceBBox };
+    }
+
+    // Full-frame px bbox of a hand from its landmarks (for the strong hand box).
+    function handBoxPx(arr, crop) {
+      const pts = crop ? arr.map(p => [p[0] * crop[2] + crop[0], p[1] * crop[3] + crop[1]])
+                       : arr.map(p => [p[0] * state.targetW, p[1] * state.targetH]);
+      let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
+      for (const [x, y] of pts) { x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y); }
+      const pad = 0.3 * Math.max(x1 - x0, y1 - y0, 1);
+      return { x0: x0 - pad, y0: y0 - pad, cw: (x1 - x0) + 2 * pad, ch: (y1 - y0) + 2 * pad };
+    }
+
+    // GUI-style blue overlay (DrawingUtils, same module as the reference), drawn ON the canvas
+    // AFTER detection so it doesn't feed back into the next frame.
+    function drawOverlay(r) {
+      const du = state.du, ctx = state.ctx, { targetW, targetH } = state;
+      const toObjs = (a) => a.map(p => ({ x: p[0], y: p[1], z: p[2] ?? 0 }));
+      // Dim the video so the teal MediaPipe skeleton pops like the reference's skeleton panel
+      // (state.dark in [0,1]; 1 = full black). Drawn AFTER detection (crops already
+      // read the clean frame), BEFORE the skeleton.
+      if (state.dark > 0) { ctx.fillStyle = `rgba(0,0,0,${state.dark})`; ctx.fillRect(0, 0, targetW, targetH); }
+      if (r.faceLm) {
+        du.drawConnectors(toObjs(r.faceLm), FaceLandmarker.FACE_LANDMARKS_TESSELATION, { color: COL.faceMesh, lineWidth: 0.5 });
+        for (const c of [FaceLandmarker.FACE_LANDMARKS_LEFT_IRIS, FaceLandmarker.FACE_LANDMARKS_RIGHT_IRIS, FaceLandmarker.FACE_LANDMARKS_FACE_OVAL])
+          du.drawConnectors(toObjs(r.faceLm), c, { color: COL.faceIris, lineWidth: 1 });
+      }
+      if (r.poseLandmarks) {
+        const ps = smoothLandmarks(state.poseF, r.poseLandmarks);
+        du.drawConnectors(ps, PoseLandmarker.POSE_CONNECTIONS, { color: COL.poseConn, lineWidth: 4 });
+        du.drawLandmarks(ps, { color: COL.poseDot, fillColor: COL.poseDot, radius: 3, lineWidth: 1 });
+      }
+      for (const [label, arr] of Object.entries(r.hands)) {
+        const bb = r.handCrops[label];
+        let lm = bb ? arr.map(p => ({ x: (p[0] * bb[2] + bb[0]) / targetW, y: (p[1] * bb[3] + bb[1]) / targetH, z: p[2] })) : toObjs(arr);
+        if (state.handF[label]) lm = smoothLandmarks(state.handF[label], lm);
+        du.drawConnectors(lm, HandLandmarker.HAND_CONNECTIONS, { color: COL.handConn, lineWidth: 3 });
+        du.drawLandmarks(lm, { color: COL.handDot, fillColor: COL.handDot, radius: 3, lineWidth: 1 });
+        // STRONG hand/finger detection box (bright, thick, labelled) — like the GUI.
+        const hb = handBoxPx(arr, bb);
+        ctx.lineWidth = 3; ctx.strokeStyle = COL.handBox;
+        ctx.strokeRect(hb.x0, hb.y0, hb.cw, hb.ch);
+        ctx.fillStyle = COL.handBox; ctx.font = 'bold 16px sans-serif';
+        ctx.fillText(label === 'Left' ? 'L' : (label === 'Right' ? 'R' : label), hb.x0 + 3, hb.y0 - 4);
+      }
+      // light pose-guided crop boxes (head + wrist region)
+      ctx.lineWidth = 1; ctx.strokeStyle = COL.bbox;
+      for (const bb of [r.handBBox, r.faceBBox]) if (bb) ctx.strokeRect(bb.x0, bb.y0, bb.cw, bb.ch);
+    }
+
+    function recordOf(r, idx) {
+      return { idx, world: r.world, raw: r.raw, vis: r.vis, hands: r.hands,
+               hand_crops: r.handCrops, face: r.faceLm, face_matrix: r.faceMat,
+               face_blendshapes: r.faceBlend };
+    }
+
+    // ── Deterministic seek loop (headless detection for an accurate frames.json) ──
+    window.bridgeNext = async () => {
+      if (!state) throw new Error('not initialized');
+      const { vid, srcFps } = state;
+      const idx = state.idx;
+      const t = idx / srcFps;
+      if (t > vid.duration + 1e-6) return { done: true, idx };
+      vid.currentTime = t;
+      await new Promise((resolve) => {
+        if (vid.readyState >= 2 && Math.abs(vid.currentTime - t) < 1e-3) resolve();
+        else { vid.onseeked = () => { vid.onseeked = null; resolve(); }; }
+      });
+      drawVideoMirrored();
+      const r = detectCanvas(Math.round(idx * 1000.0 / srcFps));
+      if (state.preview) drawOverlay(r);
+      state.idx++;
+      return { done: false, ...recordOf(r, idx) };
+    };
+
+    // ── Realtime playback loop (REAL-TIME, like the GUI) via requestVideoFrameCallback ──
+    window.bridgeRunRealtime = async () => {
+      const { vid, srcFps } = state;
+      state.frames = []; state.realtimeDone = false;
+      vid.muted = true; vid.playbackRate = 1.0;
+      try { await vid.play(); } catch (e) {}
+      const step = (now, meta) => {
+        const mt = (meta && meta.mediaTime != null) ? meta.mediaTime : vid.currentTime;
+        drawVideoMirrored();
+        const r = detectCanvas(Math.round(mt * 1000));
+        drawOverlay(r);
+        state.frames.push(recordOf(r, Math.round(mt * srcFps)));
+        if (vid.ended) { state.realtimeDone = true; return; }
+        vid.requestVideoFrameCallback(step);
+      };
+      vid.addEventListener('ended', () => { state.realtimeDone = true; }, { once: true });
+      vid.requestVideoFrameCallback(step);
+      return { started: true };
+    };
+    window.bridgeIsDone = () => !!(state && state.realtimeDone);
+    window.bridgeGetFrames = () => state.frames || [];
+
+    // Returns the current canvas content as a base64 PNG (for debug dumping).
+    window.bridgeDumpCanvas = () => state.cvs.toDataURL('image/png');
+
+    window.bridgeReady = true;
+    log('bridge page loaded');
+  </script>
+</body>
+</html>

@@ -1,0 +1,52 @@
+# ── Python ──
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+.pytest_cache/
+
+# ── Node / bridge ──
+node_bridge/node_modules/
+node_bridge/*.canvas25.png
+node_bridge/*.preview.png
+
+# ── Large model files (download separately — see README) ──
+models/*.task
+
+# ── Generated output / scratch ──
+samples/
+frames.json
+*.frames.json
+*.raw.json
+*.bvh
+*.vmd
+*.bvh.morphs.json
+*.morphs.json
+!fixtures/**/*.bvh
+
+# ── Local dev notes (not part of the public project) ──
+PORT_STATUS.md
+PYTHON_PORT_SPEC.md
+tools/build_pdf.py
+
+# ── Local data not part of the source (test captures, golden refs, rigs, story) ──
+fixtures/
+assets/*.vrm
+docs/
+*.pdf
+*.mp4
+*.zip
+*.canvas25.png
+*.preview.png
+/Test Videos/
+/test.mp4
+
+# ── OS / editor ──
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

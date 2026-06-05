@@ -1,0 +1,394 @@
+{
+  "note": "Default skeleton shipped with the package — extracted from cj.vrm (the bundled reference VRM). Used by landmarks_to_bvh() when no VRM is supplied so users can produce a BVH without providing a rig.",
+  "root": "hips",
+  "vrm_version": 0,
+  "bones": {
+    "hips": {
+      "pos0": [
+        -1.17634983e-07,
+        0.9073646,
+        0.0125542283
+      ],
+      "parent": null,
+      "children": [
+        "leftUpperLeg",
+        "rightUpperLeg",
+        "spine"
+      ]
+    },
+    "leftUpperLeg": {
+      "pos0": [
+        0.09153054816501699,
+        0.9073645403953552,
+        0.0125541686953552
+      ],
+      "parent": "hips",
+      "children": [
+        "leftLowerLeg"
+      ]
+    },
+    "leftLowerLeg": {
+      "pos0": [
+        0.08565964716501699,
+        0.4879767233953552,
+        -0.0076152086046447996
+      ],
+      "parent": "leftUpperLeg",
+      "children": [
+        "leftFoot"
+      ]
+    },
+    "leftFoot": {
+      "pos0": [
+        0.076020652165017,
+        0.10045456239535522,
+        -0.0374623313046448
+      ],
+      "parent": "leftLowerLeg",
+      "children": [
+        "leftToes"
+      ]
+    },
+    "leftToes": {
+      "pos0": [
+        0.079242521635017,
+        0.012534432395355219,
+        0.0983905126953552
+      ],
+      "parent": "leftFoot",
+      "children": []
+    },
+    "rightUpperLeg": {
+      "pos0": [
+        -0.09153076763498301,
+        0.907364778813934,
+        0.012554407113934
+      ],
+      "parent": "hips",
+      "children": [
+        "rightLowerLeg"
+      ]
+    },
+    "rightLowerLeg": {
+      "pos0": [
+        -0.08566014225498302,
+        0.487976878813934,
+        -0.007617472886066
+      ],
+      "parent": "rightUpperLeg",
+      "children": [
+        "rightFoot"
+      ]
+    },
+    "rightFoot": {
+      "pos0": [
+        -0.07602154925498301,
+        0.10045450881393397,
+        -0.037461473786066
+      ],
+      "parent": "rightLowerLeg",
+      "children": [
+        "rightToes"
+      ]
+    },
+    "rightToes": {
+      "pos0": [
+        -0.07924251725498302,
+        0.012534918813933968,
+        0.098391638213934
+      ],
+      "parent": "rightFoot",
+      "children": []
+    },
+    "spine": {
+      "pos0": [
+        6.9999999989226765e-15,
+        0.98606544,
+        -0.0576009717
+      ],
+      "parent": "hips",
+      "children": [
+        "chest"
+      ]
+    },
+    "chest": {
+      "pos0": [
+        3.645970777e-07,
+        1.372850771,
+        -0.07848918126000001
+      ],
+      "parent": "spine",
+      "children": [
+        "leftShoulder",
+        "neck",
+        "rightShoulder"
+      ]
+    },
+    "leftShoulder": {
+      "pos0": [
+        0.0455876345970777,
+        1.4157360745,
+        -0.046807285960000014
+      ],
+      "parent": "chest",
+      "children": [
+        "leftUpperArm"
+      ]
+    },
+    "leftUpperArm": {
+      "pos0": [
+        0.18171909959707772,
+        1.3759666645000002,
+        -0.046022292760000014
+      ],
+      "parent": "leftShoulder",
+      "children": [
+        "leftLowerArm"
+      ]
+    },
+    "leftLowerArm": {
+      "pos0": [
+        0.45657682959707774,
+        1.3647173607,
+        -0.044957038550000016
+      ],
+      "parent": "leftUpperArm",
+      "children": [
+        "leftHand"
+      ]
+    },
+    "leftHand": {
+      "pos0": [
+        0.7260937445970778,
+        1.36219381925,
+        -0.026967522250000014
+      ],
+      "parent": "leftLowerArm",
+      "children": [
+        "leftIndexProximal",
+        "leftMiddleProximal",
+        "leftRingProximal"
+      ]
+    },
+    "leftIndexProximal": {
+      "pos0": [
+        0.7450675719970777,
+        1.35344290372,
+        0.003963116049999986
+      ],
+      "parent": "leftHand",
+      "children": [
+        "leftIndexIntermediate"
+      ]
+    },
+    "leftIndexIntermediate": {
+      "pos0": [
+        0.7840485319970777,
+        1.35092401143,
+        0.019686940549999987
+      ],
+      "parent": "leftIndexProximal",
+      "children": [
+        "leftIndexDistal"
+      ]
+    },
+    "leftIndexDistal": {
+      "pos0": [
+        0.8116271242970777,
+        1.3492754661600002,
+        0.026251796129999987
+      ],
+      "parent": "leftIndexIntermediate",
+      "children": []
+    },
+    "leftMiddleProximal": {
+      "pos0": [
+        0.8160495545970777,
+        1.36529087659,
+        0.006769777749999983
+      ],
+      "parent": "leftHand",
+      "children": [
+        "leftMiddleIntermediate"
+      ]
+    },
+    "leftMiddleIntermediate": {
+      "pos0": [
+        0.8552654769970778,
+        1.3620780670300001,
+        0.016160846749999985
+      ],
+      "parent": "leftMiddleProximal",
+      "children": [
+        "leftMiddleDistal"
+      ]
+    },
+    "leftMiddleDistal": {
+      "pos0": [
+        0.8805330779970778,
+        1.3585185968500002,
+        0.020428777749999984
+      ],
+      "parent": "leftMiddleIntermediate",
+      "children": []
+    },
+    "leftRingProximal": {
+      "pos0": [
+        0.8168747145970777,
+        1.36913621065,
+        -0.014178153650000015
+      ],
+      "parent": "leftHand",
+      "children": [
+        "leftRingIntermediate"
+      ]
+    },
+    "leftRingIntermediate": {
+      "pos0": [
+        0.8562465626970778,
+        1.3667943441600001,
+        -0.005173322650000015
+      ],
+      "parent": "leftRingProximal",
+      "children": [
+        "leftRingDistal"
+      ]
+    },
+    "leftRingDistal": {
+      "pos0": [
+        0.8840808588970778,
+        1.3634741270300001,
+        -0.00032376965000001454
+      ],
+      "parent": "leftRingIntermediate",
+      "children": []
+    },
+    "neck": {
+      "pos0": [
+        4.2729604769999997e-07,
+        1.4494190168999999,
+        -0.06464326066000001
+      ],
+      "parent": "chest",
+      "children": [
+        "head"
+      ]
+    },
+    "head": {
+      "pos0": [
+        5.198309677e-07,
+        1.523805852,
+        -0.02445399446000001
+      ],
+      "parent": "neck",
+      "children": []
+    },
+    "rightShoulder": {
+      "pos0": [
+        -0.0455856924029223,
+        1.415736431,
+        -0.046807285960000014
+      ],
+      "parent": "chest",
+      "children": [
+        "rightUpperArm"
+      ]
+    },
+    "rightUpperArm": {
+      "pos0": [
+        -0.1817174924029223,
+        1.3759673775,
+        -0.046022054360000016
+      ],
+      "parent": "rightShoulder",
+      "children": [
+        "rightLowerArm"
+      ]
+    },
+    "rightLowerArm": {
+      "pos0": [
+        -0.4565755924029223,
+        1.3647181929,
+        -0.044956919360000014
+      ],
+      "parent": "rightUpperArm",
+      "children": [
+        "rightHand"
+      ]
+    },
+    "rightHand": {
+      "pos0": [
+        -0.7260937594029222,
+        1.3621950090800001,
+        -0.026967522360000013
+      ],
+      "parent": "rightLowerArm",
+      "children": [
+        "rightIndexProximal",
+        "rightMiddleProximal"
+      ]
+    },
+    "rightIndexProximal": {
+      "pos0": [
+        -0.7450673483029222,
+        1.35344325908,
+        0.003963115939999987
+      ],
+      "parent": "rightHand",
+      "children": [
+        "rightIndexIntermediate"
+      ]
+    },
+    "rightIndexIntermediate": {
+      "pos0": [
+        -0.7862490318029222,
+        1.352679127534,
+        0.012714150939999988
+      ],
+      "parent": "rightIndexProximal",
+      "children": [
+        "rightIndexDistal"
+      ]
+    },
+    "rightIndexDistal": {
+      "pos0": [
+        -0.8144835136029221,
+        1.352195972283,
+        0.01570809224999999
+      ],
+      "parent": "rightIndexIntermediate",
+      "children": []
+    },
+    "rightMiddleProximal": {
+      "pos0": [
+        -0.8168744944029223,
+        1.3691369236400002,
+        -0.014178511360000014
+      ],
+      "parent": "rightHand",
+      "children": [
+        "rightMiddleIntermediate"
+      ]
+    },
+    "rightMiddleIntermediate": {
+      "pos0": [
+        -0.8571131144029223,
+        1.3666154086400002,
+        -0.010825273360000014
+      ],
+      "parent": "rightMiddleProximal",
+      "children": [
+        "rightMiddleDistal"
+      ]
+    },
+    "rightMiddleDistal": {
+      "pos0": [
+        -0.8852761898029222,
+        1.3629471003800002,
+        -0.009184715120000015
+      ],
+      "parent": "rightMiddleIntermediate",
+      "children": []
+    }
+  }
+}

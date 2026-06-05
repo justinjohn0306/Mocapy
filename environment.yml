@@ -1,0 +1,11 @@
+name: mocapy
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - pip
+  - pip:
+      - "numpy>=1.26,<2.0"
+      - "opencv-python>=4.8"
+      - "mediapipe>=0.10.21"
+      - "matplotlib>=3.7"
